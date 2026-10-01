@@ -1,0 +1,10 @@
+pwd
+ls
+mkdir test
+ls
+cd test
+pwd
+cd ..
+echo Привет!
+echo $USER
+date
