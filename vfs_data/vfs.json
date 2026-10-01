@@ -1,0 +1,19 @@
+{
+    "file_type": "dir",
+    "data": {
+        "repo": {
+            "file_type": "dir",
+            "data": {
+                "src": {
+                    "file_type": "dir",
+                    "data": {
+                        "test": {
+                            "file_type": "dir",
+                            "data": {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

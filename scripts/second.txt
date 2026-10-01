@@ -1,0 +1,5 @@
+pwd
+mkdir randdir
+cd randomdir
+mkdir randomdir2
+pwd
