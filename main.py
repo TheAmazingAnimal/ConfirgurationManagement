@@ -4,6 +4,7 @@ import time
 import base64
 import zipfile
 import argparse
+import platform
 
 
 class Node:
@@ -227,6 +228,18 @@ def execute_command(args, node):
         case ('date',):
             print(time.asctime())
             return node, True, False
+
+        case ('date', *_):
+            print('date: arguments are not supported')
+            return node, False, False
+
+        case ('uname',):
+            print(platform.system())
+            return node, True, False
+
+        case ('uname', *_):
+            print('uname: arguments are not supported')
+            return node, False, False
 
         case ():
             print('Error: empty command')
