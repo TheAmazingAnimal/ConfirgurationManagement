@@ -18,6 +18,7 @@ VFS полностью хранится в оперативной памяти. 
 * `pwd` - вывод текущего виртуального пути
 * `echo` - вывод текста и значений переменных окружения
 * `date` - вывод текущей даты и времени
+* `uname` - вывод названия операционной системы
 * `exit` - завершение работы эмулятора
 
 Также реализована обработка основных ошибок команд, раскрытие переменных окружения и выполнение команд из стартового скрипта.
@@ -62,16 +63,16 @@ config.txt data.bin readme.txt src
 AmazingVFS:/repo/$ cd src
 AmazingVFS:/repo/src/$ pwd
 /repo/src/
+AmazingVFS:/repo/src/$ ls
+main.py
 AmazingVFS:/repo/src/$ cd ..
-AmazingVFS:/repo/$ mkdir test
-AmazingVFS:/repo/$ ls
-config.txt data.bin readme.txt src test
-AmazingVFS:/repo/$ cd test
-AmazingVFS:/repo/test/$ pwd
-/repo/test/
-AmazingVFS:/repo/test/$ echo $HOME
+AmazingVFS:/repo/$ date
+Wed Oct  7 21:30:00 2026
+AmazingVFS:/repo/$ uname
+Darwin
+AmazingVFS:/repo/$ echo $HOME
 /Users/example
-AmazingVFS:/repo/test/$ cd unknown
+AmazingVFS:/repo/$ cd unknown
 cd: unknown: No such file or directory
 Script stopped at line 15: cd unknown
 ```

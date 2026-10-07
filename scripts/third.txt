@@ -1,0 +1,14 @@
+pwd
+ls
+cd repo
+pwd
+ls
+cd src
+pwd
+ls
+cd ..
+pwd
+date
+uname
+echo $HOME
+echo $USER
