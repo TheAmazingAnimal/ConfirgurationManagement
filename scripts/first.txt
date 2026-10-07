@@ -1,10 +1,19 @@
 pwd
 ls
+cd repo
+pwd
+ls
 mkdir test
 ls
 cd test
 pwd
 cd ..
-echo Привет!
+pwd
+cd src
+pwd
+ls
+cd ..
+echo $HOME
 echo $USER
 date
+cd nonexistent

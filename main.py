@@ -1,7 +1,8 @@
 import os
 import re
 import time
-import json
+import base64
+import zipfile
 import argparse
 
 
@@ -88,53 +89,97 @@ def parse(command):
 
     return command.split()
 
-def node_to_dict(node):
-    result = {
-        'file_type': node.file_type,
-        'data': {}
-    }
+def split_zip_path(path):
+    path = path.replace('\\', '/')
 
-    for name, child in node.data.items():
-        if name != '..':
-            result['data'][name] = node_to_dict(child)
+    parts = [
+        part
+        for part in path.split('/')
+        if part
+    ]
 
-    return result
+    if any(part in ('.', '..') for part in parts):
+        return None
+
+    return parts
 
 
-def dict_to_node(data, parent=None):
-    node = Node(data['file_type'], {})
+def ensure_dir(root, parts):
+    node = root
 
-    if parent is not None:
-        node.data['..'] = parent
+    for part in parts:
+        if part not in node.data:
+            node.data[part] = Node(
+                'dir',
+                {'..': node}
+            )
 
-    for name, child_data in data['data'].items():
-        node.data[name] = dict_to_node(
-            child_data,
-            node
-        )
+        elif node.data[part].file_type != 'dir':
+            return None
+
+        node = node.data[part]
 
     return node
 
 
-def save_vfs(root, vfs_path):
-    os.makedirs(vfs_path, exist_ok=True)
+def load_vfs_from_zip(vfs_path):
+    if not os.path.isfile(vfs_path):
+        raise FileNotFoundError(
+            f"VFS ZIP archive '{vfs_path}' not found"
+        )
 
-    file_path = os.path.join(vfs_path, 'vfs.json')
+    if not zipfile.is_zipfile(vfs_path):
+        raise ValueError(
+            f"VFS source '{vfs_path}' is not a ZIP archive"
+        )
 
-    with open(file_path, 'w', encoding='utf-8') as file:
-        json.dump(node_to_dict(root), file, ensure_ascii=False, indent=4)
+    root = Node('dir', {})
 
+    with zipfile.ZipFile(vfs_path, 'r') as archive:
+        for info in archive.infolist():
+            parts = split_zip_path(info.filename)
 
-def load_vfs(vfs_path):
-    file_path = os.path.join(vfs_path, 'vfs.json')
+            if parts is None:
+                raise ValueError(
+                    f"Invalid path in VFS archive: "
+                    f"{info.filename}"
+                )
 
-    if not os.path.exists(file_path):
-        return None
+            if not parts:
+                continue
 
-    with open(file_path, 'r', encoding='utf-8') as file:
-        data = json.load(file)
+            if info.is_dir():
+                ensure_dir(root, parts)
+                continue
 
-    return dict_to_node(data)
+            parent = ensure_dir(root, parts[:-1])
+
+            if parent is None:
+                raise ValueError(
+                    f"Path conflict in VFS archive: "
+                    f"{info.filename}"
+                )
+
+            name = parts[-1]
+
+            if name in parent.data:
+                raise ValueError(
+                    f"Duplicate path in VFS archive: "
+                    f"{info.filename}"
+                )
+
+            raw_data = archive.read(info)
+
+            encoded_data = base64.b64encode(raw_data).decode('ascii')
+
+            parent.data[name] = Node(
+                'file',
+                {
+                    'content_base64': encoded_data
+                }
+            )
+
+    return root
 
 
 def execute_command(args, node):
@@ -191,64 +236,58 @@ def execute_command(args, node):
             print(f'{command}: command not found')
             return node, False, False
 
-def repl(node, vfs_path):
+def repl(node):
     VFS_NAME = 'AmazingVFS'
 
     while True:
-        command = input(f'{VFS_NAME}:{pwd(node)}$ ')
+        try:
+            command = input(f'{VFS_NAME}:{pwd(node)}$ ')
+        except EOFError:
+            print()
+            break
+        except KeyboardInterrupt:
+            print()
+            continue
 
         args = parse(command)
 
         node, success, should_exit = execute_command(args, node)
 
-        if success:
-            save_vfs(node_root(node), vfs_path)
-
         if should_exit:
             break
 
-def node_root(node):
-    while '..' in node.data:
-        node = node.data['..']
 
-    return node
-
-def run_script(node, script_path, vfs_path):
+def run_script(node, script_path):
     try:
         with open(script_path, 'r', encoding='utf-8') as script:
-            for line_number, line in enumerate(script,start=1):
+            for line_number, line in enumerate(script, start=1):
                 command = line.strip()
 
-                if not command:
+                if not command or command.startswith('#'):
                     continue
 
                 print(f'AmazingVFS:{pwd(node)}$ {command}')
 
                 args = parse(command)
-                node, success, should_exit = execute_command(args,node)
-
-                if success:
-                    save_vfs(node_root(node), vfs_path)
+                node, success, should_exit = execute_command(args, node)
 
                 if should_exit:
-                    return node
+                    return node, True
 
                 if not success:
-                    print(
-                        f'Script stopped at line '
-                        f'{line_number}: {command}'
-                    )
-                    return node
+                    print(f'Script stopped at line {line_number}: {command}')
+                    return node, False
 
     except FileNotFoundError:
         print(f"Error: script file '{script_path}' not found")
-        return node
+        return node, False
 
     except OSError as error:
         print(f"Error: cannot read script: {error}")
-        return node
+        return node, False
 
-    return node
+    return node, True
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -273,31 +312,31 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
+    vfs_path = os.path.abspath(args.vfs_path)
+    script_path = (os.path.abspath(args.script) if args.script else None)
+
     print('--- AmazingVFS configuration ---')
-    print(f'VFS path: {os.path.abspath(args.vfs_path)}')
-    print(
-        f'Startup script: '
-        f'{os.path.abspath(args.script) if args.script else "not found"}'
-    )
+    print(f'VFS ZIP: {vfs_path}')
+
+    print(f'Startup script: {script_path if script_path else "not specified"}')
+
+    print('VFS mode: in-memory')
     print('--------------------------------')
     print()
 
-    root = load_vfs(args.vfs_path)
+    try:
+        root = load_vfs_from_zip(vfs_path)
+    except (FileNotFoundError, ValueError, zipfile.BadZipFile, OSError) as error:
+        print(f'Error: cannot load VFS: {error}')
+        return
 
-    if root is None:
-        src = Node('dir', {})
-        repo = Node('dir',{'src': src})
-        root = Node('dir',{'repo': repo})
+    if script_path:
+        root, success = run_script(root, script_path)
 
-        src.data['..'] = repo
-        repo.data['..'] = root
+        if not success:
+            return
 
-        save_vfs(root, args.vfs_path)
-
-    if args.script:
-        root = run_script(root, args.script, args.vfs_path)
-
-    repl(root, args.vfs_path)
+    repl(root)
 
 
 if __name__ == '__main__':

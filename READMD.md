@@ -3,42 +3,69 @@
 ### Общее описание
 
 Данный проект представляет собой эмулятор командной оболочки операционной системы, реализованный на языке Python.
-
-Эмулятор работает в виде консольного интерфейса (CLI) и имитирует работу с виртуальной файловой системой (VFS), построенной в оперативной памяти.
+Эмулятор работает в виде консольного интерфейса (CLI) и имитирует работу с виртуальной файловой системой (VFS), загружаемой из ZIP-архива.
+VFS полностью хранится в оперативной памяти. ZIP-архив не распаковывается и не изменяется во время работы программы. Все операции с виртуальной файловой системой выполняются над объектами `Node` в памяти.
+Для запуска эмулятора необходимо указать путь к ZIP-архиву VFS с помощью параметра `--vfs-path`. Также можно указать стартовый скрипт с помощью параметра `--script`, команды из которого будут выполняться автоматически до первой ошибки.
+Для двоичных данных файлов используется кодирование Base64.
 
 ---
 
 ### Команды
 
-* `ls` - просмотр содержимого текущей директории
+* `ls` - просмотр содержимого текущей директории VFS
 * `cd` - переход между директориями виртуальной файловой системы
-* `mkdir` - создание директории в VFS
+* `mkdir` - создание директории в VFS только в оперативной памяти
 * `pwd` - вывод текущего виртуального пути
 * `echo` - вывод текста и значений переменных окружения
 * `date` - вывод текущей даты и времени
 * `exit` - завершение работы эмулятора
 
-Также реализована обработка основных ошибок команд и раскрытие переменных окружения.
+Также реализована обработка основных ошибок команд, раскрытие переменных окружения и выполнение команд из стартового скрипта.
+
+Для запуска используются параметры командной строки:
+
+* `--vfs-path` - путь к ZIP-архиву, являющемуся источником VFS
+* `--script` - путь к стартовому скрипту с командами эмулятора
 
 ---
 
 ### Пример использования
 
+Запуск эмулятора с VFS из ZIP-архива:
+
+```bash
+python3 main.py --vfs-path ./vfs/files.zip
+```
+
+Запуск эмулятора со стартовым скриптом:
+
+```bash
+python3 main.py --vfs-path ./vfs/files.zip --script ./scripts/startup.txt
+```
+
+Пример работы:
+
 ```text
+--- AmazingVFS configuration ---
+VFS ZIP: /Users/example/AmazingVFS/vfs/files.zip
+Startup script: not specified
+VFS mode: in-memory
+--------------------------------
+
 AmazingVFS:/$ ls
 repo
 AmazingVFS:/$ cd repo
 AmazingVFS:/repo/$ pwd
 /repo/
 AmazingVFS:/repo/$ ls
-src
+config.txt data.bin readme.txt src
 AmazingVFS:/repo/$ cd src
 AmazingVFS:/repo/src/$ pwd
 /repo/src/
 AmazingVFS:/repo/src/$ cd ..
 AmazingVFS:/repo/$ mkdir test
 AmazingVFS:/repo/$ ls
-src test
+config.txt data.bin readme.txt src test
 AmazingVFS:/repo/$ cd test
 AmazingVFS:/repo/test/$ pwd
 /repo/test/
@@ -46,7 +73,5 @@ AmazingVFS:/repo/test/$ echo $HOME
 /Users/example
 AmazingVFS:/repo/test/$ cd unknown
 cd: unknown: No such file or directory
-AmazingVFS:/repo/test/$ cd ..
-AmazingVFS:/repo/$ exit
-Exit CLI
+Script stopped at line 15: cd unknown
 ```
