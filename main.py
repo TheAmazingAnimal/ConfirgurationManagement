@@ -24,6 +24,9 @@ def cd(node, name):
         print("cd: ..: No such file or directory")
         return node, False
 
+    if name == '.':
+        return node, True
+
     if name not in node.data:
         print(f"cd: {name}: No such file or directory")
         return node, False
@@ -48,7 +51,7 @@ def pwd(node):
 
 def ls(node):
     for name in sorted(node.data):
-        if name != '..':
+        if name not in ('..', 'mode'):
             print(name, end=' ')
 
     print()
@@ -73,7 +76,7 @@ def mkdir(node, names):
 
         node.data[name] = Node(
             'dir',
-            {'..': node}
+            {'..': node, 'mode': 0o755}
         )
     return success
 
@@ -112,7 +115,7 @@ def ensure_dir(root, parts):
         if part not in node.data:
             node.data[part] = Node(
                 'dir',
-                {'..': node}
+                {'..': node, 'mode': 0o755}
             )
 
         elif node.data[part].file_type != 'dir':
@@ -134,7 +137,7 @@ def load_vfs_from_zip(vfs_path):
             f"VFS source '{vfs_path}' is not a ZIP archive"
         )
 
-    root = Node('dir', {})
+    root = Node('dir',{'mode': 0o755})
 
     with zipfile.ZipFile(vfs_path, 'r') as archive:
         for info in archive.infolist():
@@ -173,15 +176,209 @@ def load_vfs_from_zip(vfs_path):
 
             encoded_data = base64.b64encode(raw_data).decode('ascii')
 
-            parent.data[name] = Node(
-                'file',
-                {
-                    'content_base64': encoded_data
-                }
-            )
+            parent.data[name] = Node('file',{'content_base64': encoded_data, 'mode': 0o644})
 
     return root
 
+
+def get_root(node):
+    while '..' in node.data:
+        node = node.data['..']
+
+    return node
+
+
+def resolve_path(node, path):
+    if path == '':
+        return node
+
+    if path.startswith('/'):
+        current = get_root(node)
+        parts = path.split('/')[1:]
+    else:
+        current = node
+        parts = path.split('/')
+
+    for part in parts:
+        if part == '' or part == '.':
+            continue
+
+        if part == '..':
+            if '..' in current.data:
+                current = current.data['..']
+                continue
+            return None
+
+        if part not in current.data:
+            return None
+
+        current = current.data[part]
+
+    return current
+
+
+def get_parent_and_name(node, path):
+    path = path.rstrip('/')
+
+    if not path:
+        return None, None
+
+    if '/' in path:
+        parent_path, name = path.rsplit('/', 1)
+
+        if parent_path == '':
+            parent_path = '/'
+
+        parent = resolve_path(node, parent_path)
+    else:
+        parent = node
+        name = path
+
+    return parent, name
+
+def clone_node(source, parent=None):
+    if source.file_type == 'file':
+        return Node('file',{
+                'content_base64':
+                    source.data.get(
+                        'content_base64',
+                        ''
+                    ),
+                'mode':
+                    source.data.get(
+                        'mode',
+                        0o644
+                    )
+            }
+        )
+
+    new_node = Node('dir',{'mode': source.data.get('mode', 0o755)})
+
+    if parent is not None:
+        new_node.data['..'] = parent
+
+    for name, child in source.data.items():
+        if name in ('..', 'mode'):
+            continue
+
+        new_node.data[name] = clone_node(child, new_node)
+
+    return new_node
+
+def is_inside_directory(node, directory):
+    current = node
+
+    while '..' in current.data:
+        if current is directory:
+            return True
+
+        current = current.data['..']
+
+    return current is directory
+
+def cp(node, args):
+    recursive = False
+
+    if args and args[0] == '-r':
+        recursive = True
+        args = args[1:]
+
+    if len(args) < 2:
+        print('cp: missing file operand')
+        return False
+
+    sources = args[:-1]
+    destination_path = args[-1]
+
+    destination = resolve_path(node, destination_path)
+
+    if len(sources) > 1:
+        if destination is None:
+            print(f"cp: target '{destination_path}' is not a directory")
+            return False
+
+        if destination.file_type != 'dir':
+            print(f"cp: target '{destination_path}' is not a directory")
+            return False
+
+    success = True
+
+    for source_path in sources:
+        source = resolve_path(node, source_path)
+
+        if source is None:
+            print(f"cp: cannot '{source_path}': No such file or directory")
+            success = False
+            continue
+
+        if source.file_type == 'dir' and not recursive:
+            print(f"cp: -r not specified; '{source_path}'")
+            success = False
+            continue
+
+        if destination is not None and destination.file_type == 'dir':
+            source_name = source_path.rstrip('/').split('/')[-1]
+
+            target_parent = destination
+            target_name = source_name
+        else:
+            target_parent, target_name = get_parent_and_name(node, destination_path)
+
+            if target_parent is None:
+                print(f"cp: cannot create '{destination_path}'")
+                success = False
+                continue
+
+            if target_parent.file_type != 'dir':
+                print(f"cp: target '{destination_path}' is not a directory")
+                success = False
+                continue
+
+        if source.file_type == 'dir':
+            if is_inside_directory(target_parent, source):
+                print(f"cp: cannot copy directory '{source_path}' into itself")
+                success = False
+                continue
+
+        if target_name in target_parent.data:
+            existing = target_parent.data[target_name]
+
+            if (source.file_type == 'dir' and existing.file_type == 'dir'):
+                print(f"cp: cannot overwrite directory '{target_name}'")
+                success = False
+                continue
+
+            del target_parent.data[target_name]
+
+        copied = clone_node(source, target_parent)
+        target_parent.data[target_name] = copied
+
+    return success
+
+def chmod(node, mode_text, paths):
+    if not re.fullmatch(r'[0-7]{3,4}',mode_text):
+        print(f"chmod: invalid mode: '{mode_text}'")
+        return False
+
+    try:
+        mode = int(mode_text, 8)
+    except ValueError:
+        print(f"chmod: invalid mode: '{mode_text}'")
+        return False
+
+    success = True
+
+    for path in paths:
+        target = resolve_path(node, path)
+
+        if target is None:
+            print(f"chmod: cannot access '{path}': No such file or directory")
+            success = False
+            continue
+
+        target.data['mode'] = mode
+
+    return success
 
 def execute_command(args, node):
     match args:
@@ -221,6 +418,10 @@ def execute_command(args, node):
             print(pwd(node))
             return node, True, False
 
+        case ('pwd', *_):
+            print('pwd: arguments are not supported')
+            return node, False, False
+
         case ('echo', *args):
             print(*args)
             return node, True, False
@@ -239,6 +440,23 @@ def execute_command(args, node):
 
         case ('uname', *_):
             print('uname: arguments are not supported')
+            return node, False, False
+
+        case ('cp', *cp_args):
+            success = cp(node, cp_args)
+
+            return node, success, False
+
+        case ('chmod', mode, *paths):
+            if not paths:
+                print('chmod: missing operand')
+                return node, False, False
+
+            success = chmod(node, mode, paths)
+            return node, success, False
+
+        case ('chmod',):
+            print('chmod: missing operand')
             return node, False, False
 
         case ():
