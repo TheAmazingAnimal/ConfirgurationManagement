@@ -1,3 +1,5 @@
 .idea
 .venv
 vfs/*.zip
+create_test_vfs.py
+.DS_Store
