@@ -44,7 +44,7 @@ python3 main.py --vfs-path ./vfs/files.zip
 Запуск эмулятора со стартовым скриптом:
 
 ```bash
-python3 main.py --vfs-path ./vfs/files.zip --script ./scripts/startup.txt
+python3 main.py --vfs-path ./vfs/files.zip --script ./tests/startup.txt
 ```
 
 Пример работы:
