@@ -74,24 +74,19 @@ def mkdir(node, names):
             success = False
             continue
 
-        node.data[name] = Node(
-            'dir',
-            {'..': node, 'mode': 0o755}
-        )
+        node.data[name] = Node('dir', {'..': node, 'mode': 0o755})
     return success
 
-def parse(command):
-    def replace_variable(match):
+
+def parse(cmd):
+    def r_var(match):
         name = match.group(1)
         return env.get(name, '')
 
-    command = re.sub(
-        r'\$([A-Za-z_][A-Za-z0-9_]*)',
-        replace_variable,
-        command
-    )
+    cmd = re.sub(r'\$([A-Za-z_][A-Za-z0-9_]*)', r_var, cmd)
 
-    return command.split()
+    return cmd.split()
+
 
 def split_zip_path(path):
     path = path.replace('\\', '/')
@@ -137,7 +132,7 @@ def load_vfs_from_zip(vfs_path):
             f"VFS source '{vfs_path}' is not a ZIP archive"
         )
 
-    root = Node('dir',{'mode': 0o755})
+    root = Node('dir', {'mode': 0o755})
 
     with zipfile.ZipFile(vfs_path, 'r') as archive:
         for info in archive.infolist():
@@ -176,7 +171,10 @@ def load_vfs_from_zip(vfs_path):
 
             encoded_data = base64.b64encode(raw_data).decode('ascii')
 
-            parent.data[name] = Node('file',{'content_base64': encoded_data, 'mode': 0o644})
+            parent.data[name] = Node('file',
+                                     {'content_base64': encoded_data,
+                                      'mode': 0o644}
+                                     )
 
     return root
 
@@ -236,9 +234,10 @@ def get_parent_and_name(node, path):
 
     return parent, name
 
+
 def clone_node(source, parent=None):
     if source.file_type == 'file':
-        return Node('file',{
+        return Node('file', {
                 'content_base64':
                     source.data.get(
                         'content_base64',
@@ -252,7 +251,7 @@ def clone_node(source, parent=None):
             }
         )
 
-    new_node = Node('dir',{'mode': source.data.get('mode', 0o755)})
+    new_node = Node('dir', {'mode': source.data.get('mode', 0o755)})
 
     if parent is not None:
         new_node.data['..'] = parent
@@ -288,17 +287,17 @@ def cp(node, args):
         return False
 
     sources = args[:-1]
-    destination_path = args[-1]
+    d_path = args[-1]
 
-    destination = resolve_path(node, destination_path)
+    destination = resolve_path(node, d_path)
 
     if len(sources) > 1:
         if destination is None:
-            print(f"cp: target '{destination_path}' is not a directory")
+            print(f"cp: target '{d_path}' is not a directory")
             return False
 
         if destination.file_type != 'dir':
-            print(f"cp: target '{destination_path}' is not a directory")
+            print(f"cp: target '{d_path}' is not a directory")
             return False
 
     success = True
@@ -322,15 +321,15 @@ def cp(node, args):
             target_parent = destination
             target_name = source_name
         else:
-            target_parent, target_name = get_parent_and_name(node, destination_path)
+            target_parent, target_name = get_parent_and_name(node, d_path)
 
             if target_parent is None:
-                print(f"cp: cannot create '{destination_path}'")
+                print(f"cp: cannot create '{d_path}'")
                 success = False
                 continue
 
             if target_parent.file_type != 'dir':
-                print(f"cp: target '{destination_path}' is not a directory")
+                print(f"cp: target '{d_path}' is not a directory")
                 success = False
                 continue
 
@@ -379,6 +378,39 @@ def chmod(node, mode_text, paths):
         target.data['mode'] = mode
 
     return success
+
+def cat(node, paths):
+    if not paths:
+        print("cat: missing operand")
+        return False
+
+    success = True
+
+    for path in paths:
+        target = resolve_path(node, path)
+
+        if target is None:
+            print(f"cat: {path}: No such file or directory")
+            success = False
+            continue
+
+        if target.file_type == 'dir':
+            print(f"cat: {path}: Is a directory")
+            success = False
+            continue
+
+        encoded_data = target.data.get('content_base64', '')
+
+        try:
+            raw_data = base64.b64decode(encoded_data)
+            content = raw_data.decode('utf-8', errors='replace')
+            print(content)
+        except (ValueError, TypeError):
+            print(f"cat: {path}: cannot read file")
+            success = False
+
+    return success
+
 
 def execute_command(args, node):
     match args:
@@ -459,6 +491,10 @@ def execute_command(args, node):
             print('chmod: missing operand')
             return node, False, False
 
+        case ('cat', *paths):
+            success = cat(node, paths)
+            return node, success, False
+
         case ():
             print('Error: empty command')
             return node, False, False
@@ -468,11 +504,11 @@ def execute_command(args, node):
             return node, False, False
 
 def repl(node):
-    VFS_NAME = 'AmazingVFS'
+    vfs_name = 'AmazingVFS'
 
     while True:
         try:
-            command = input(f'{VFS_NAME}:{pwd(node)}$ ')
+            command = input(f'{vfs_name}:{pwd(node)}$ ')
         except EOFError:
             print()
             break
@@ -557,7 +593,7 @@ def main():
 
     try:
         root = load_vfs_from_zip(vfs_path)
-    except (FileNotFoundError, ValueError, zipfile.BadZipFile, OSError) as error:
+    except (FileNotFoundError, ValueError, OSError) as error:
         print(f'Error: cannot load VFS: {error}')
         return
 
