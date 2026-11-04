@@ -7,6 +7,10 @@ import argparse
 import platform
 
 
+MIN_CP_ARGS = 2
+MIN_CHMOD_ARGS = 2
+
+
 class Node:
     def __init__(self, file_type, data=None):
         self.file_type = file_type
@@ -247,6 +251,7 @@ def clone_node(source, parent=None):
 
     return new_node
 
+
 def is_inside_directory(node, directory):
     current = node
 
@@ -259,62 +264,94 @@ def is_inside_directory(node, directory):
     return current is directory
 
 
+def is_dir(node):
+    return node is not None and node.file_type == 'dir'
+
+
+def cp_check_source(source, source_path, recursive):
+    if source is None:
+        print(f"cp: cannot '{source_path}': No such file or directory")
+        return False
+
+    if source.file_type == 'dir' and not recursive:
+        print(f"cp: -r not specified; '{source_path}'")
+        return False
+
+    return True
+
+
+def cp_get_target(node, destination, source_path, d_path):
+    if is_dir(destination):
+        return destination, source_path.rstrip('/').split('/')[-1]
+
+    return get_parent_and_name(node, d_path)
+
+
+def cp_check_parent(parent, d_path):
+    if parent is None:
+        print(f"cp: cannot create '{d_path}'")
+        return False
+
+    if parent.file_type != 'dir':
+        print(f"cp: target '{d_path}' is not a directory")
+        return False
+
+    return True
+
+
+def cp_one(node, source_path, destination, d_path, recursive):
+    source = resolve_path(node, source_path)
+
+    if not cp_check_source(source, source_path, recursive):
+        return False
+
+    parent, name = cp_get_target(node, destination, source_path, d_path)
+
+    if not cp_check_parent(parent, d_path):
+        return False
+
+    if source.file_type == 'dir' and is_inside_directory(parent, source):
+        print(f"cp: cannot copy directory '{source_path}' into itself")
+        return False
+
+    existing = parent.data.get(name)
+
+    if existing is not None:
+        if source.file_type == 'dir' and existing.file_type == 'dir':
+            print(f"cp: cannot overwrite directory '{name}'")
+            return False
+
+        del parent.data[name]
+
+    parent.data[name] = clone_node(source, parent)
+    return True
+
+
 def cp(node, args):
-    recursive = args and args[0] == '-r'
+    recursive = bool(args) and args[0] == '-r'
     args = args[1:] if recursive else args
 
-    if len(args) < 2:
+    if len(args) < MIN_CP_ARGS:
         print('cp: missing file operand')
         return False
 
     sources, d_path = args[:-1], args[-1]
     destination = resolve_path(node, d_path)
 
-    if len(sources) > 1 and (destination is None or destination.file_type != 'dir'):
+    if len(sources) > 1 and not is_dir(destination):
         print(f"cp: target '{d_path}' is not a directory")
         return False
 
-    success = True
-    for source_path in sources:
-        source = resolve_path(node, source_path)
+    results = [
+        cp_one(node, source_path, destination, d_path, recursive)
+        for source_path in sources
+    ]
 
-        if source is None or (source.file_type == 'dir' and not recursive):
-            print(f"cp: cannot '{source_path}': No such file or directory" if source is None
-                  else f"cp: -r not specified; '{source_path}'")
-            success = False
-            continue
-
-        if destination and destination.file_type == 'dir':
-            target_parent, target_name = destination, source_path.rstrip('/').split('/')[-1]
-        else:
-            target_parent, target_name = get_parent_and_name(node, d_path)
-
-        if target_parent is None or target_parent.file_type != 'dir':
-            print(f"cp: cannot create '{d_path}'" if target_parent is None
-                  else f"cp: target '{d_path}' is not a directory")
-            success = False
-            continue
-
-        if source.file_type == 'dir' and is_inside_directory(target_parent, source):
-            print(f"cp: cannot copy directory '{source_path}' into itself")
-            success = False
-            continue
-
-        existing = target_parent.data.get(target_name)
-        if existing:
-            if source.file_type == 'dir' and existing.file_type == 'dir':
-                print(f"cp: cannot overwrite directory '{target_name}'")
-                success = False
-                continue
-            del target_parent.data[target_name]
-
-        target_parent.data[target_name] = clone_node(source, target_parent)
-
-    return success
+    return all(results)
 
 
 def chmod(node, mode_text, paths):
-    if not re.fullmatch(r'[0-7]{3,4}',mode_text):
+    if not re.fullmatch(r'[0-7]{3,4}', mode_text):
         print(f"chmod: invalid mode: '{mode_text}'")
         return False
 
@@ -337,6 +374,7 @@ def chmod(node, mode_text, paths):
         target.data['mode'] = mode
 
     return success
+
 
 def cat(node, paths):
     if not paths:
@@ -371,96 +409,101 @@ def cat(node, paths):
     return success
 
 
+def no_args_command(name, action):
+    def handler(node, args):
+        if args:
+            print(f'{name}: arguments are not supported')
+            return node, False, False
+
+        action(node)
+        return node, True, False
+
+    return handler
+
+
+def cmd_exit(node, args):
+    if args:
+        print('exit: command not found')
+        return node, False, False
+
+    print('Exit CLI')
+    return node, True, True
+
+
+def cmd_cd(node, args):
+    if not args:
+        print('cd: missing operand')
+        return node, False, False
+
+    if len(args) > 1:
+        print('cd: too many arguments')
+        return node, False, False
+
+    node, success = cd(node, args[0])
+    return node, success, False
+
+
+def cmd_mkdir(node, args):
+    if not args:
+        print('mkdir: missing operand')
+        return node, False, False
+
+    return node, mkdir(node, args), False
+
+
+def cmd_echo(node, args):
+    print(*args)
+    return node, True, False
+
+
+def cmd_cp(node, args):
+    return node, cp(node, args), False
+
+
+def cmd_chmod(node, args):
+    if len(args) < MIN_CHMOD_ARGS:
+        print('chmod: missing operand')
+        return node, False, False
+
+    return node, chmod(node, args[0], args[1:]), False
+
+
+def cmd_cat(node, args):
+    return node, cat(node, args), False
+
+
+COMMANDS = {
+    'exit': cmd_exit,
+    'ls': no_args_command('ls', ls),
+    'cd': cmd_cd,
+    'mkdir': cmd_mkdir,
+    'pwd': no_args_command('pwd', lambda node: print(pwd(node))),
+    'echo': cmd_echo,
+    'date': no_args_command('date', lambda node: print(time.asctime())),
+    'uname': no_args_command(
+        'uname',
+        lambda node: print(platform.system())
+    ),
+    'cp': cmd_cp,
+    'chmod': cmd_chmod,
+    'cat': cmd_cat,
+}
+
+
 def execute_command(args, node):
-    match args:
-        case ('exit',):
-            print('Exit CLI')
-            return node, True, True
+    if not args:
+        print('Error: empty command')
+        return node, False, False
 
-        case ('ls',):
-            ls(node)
-            return node, True, False
+    command, *rest = args
+    handler = COMMANDS.get(command)
 
-        case ('ls', *_):
-            print('ls: arguments are not supported')
-            return node, False, False
+    if handler is None:
+        print(f'{command}: command not found')
+        return node, False, False
 
-        case ('cd', name):
-            node, success = cd(node, name)
-            return node, success, False
+    return handler(node, rest)
 
-        case ('cd',):
-            print('cd: missing operand')
-            return node, False, False
-
-        case ('cd', *_):
-            print('cd: too many arguments')
-            return node, False, False
-
-        case ('mkdir', *names):
-            if not names:
-                print('mkdir: missing operand')
-                return node, False, False
-
-            success = mkdir(node, names)
-            return node, success, False
-
-        case ('pwd',):
-            print(pwd(node))
-            return node, True, False
-
-        case ('pwd', *_):
-            print('pwd: arguments are not supported')
-            return node, False, False
-
-        case ('echo', *args):
-            print(*args)
-            return node, True, False
-
-        case ('date',):
-            print(time.asctime())
-            return node, True, False
-
-        case ('date', *_):
-            print('date: arguments are not supported')
-            return node, False, False
-
-        case ('uname',):
-            print(platform.system())
-            return node, True, False
-
-        case ('uname', *_):
-            print('uname: arguments are not supported')
-            return node, False, False
-
-        case ('cp', *cp_args):
-            success = cp(node, cp_args)
-
-            return node, success, False
-
-        case ('chmod', mode, *paths):
-            if not paths:
-                print('chmod: missing operand')
-                return node, False, False
-
-            success = chmod(node, mode, paths)
-            return node, success, False
-
-        case ('chmod',):
-            print('chmod: missing operand')
-            return node, False, False
-
-        case ('cat', *paths):
-            success = cat(node, paths)
-            return node, success, False
-
-        case ():
-            print('Error: empty command')
-            return node, False, False
-
-        case (command, *_):
-            print(f'{command}: command not found')
-            return node, False, False
 
 def repl(node):
     vfs_name = 'AmazingVFS'
